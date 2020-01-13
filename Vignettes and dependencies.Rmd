@@ -1,0 +1,86 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+# Function dependencies
+library(tidyverse)
+library(stringr)
+library(lubridate)
+library(xml2)
+library(data.table)
+library(rlang)
+library(jsonlite)
+library(chron)
+
+# Libraries for testing code optimization
+library(microbenchmark)
+library(rowr)
+library(furrr)
+library(tictoc)
+source("R/loop_sensor_functions.R")
+```
+
+# Paths and attributes of detectors, r_nodes and corridors
+
+```{r}
+pull_configuration("within_dir")
+config <- pull_configuration("in-memory")
+```
+
+```{r}
+# Get list of detectors to use in pull_loops function
+
+sensors <- sensor_pull()
+# ---------------------
+# ARGUMENTS for pull_loops()
+# ---------------------
+
+sensor <- detectors[[1]][[454]]
+pull_date <- "20190101"
+date_fmt <- "ymd"
+
+# ---------------------
+# RUNNING pull_loops()
+# ---------------------
+
+# Simple function examle
+loop_data <- pull_loops(pull_date, date_fmt, sensor)
+
+# Mapping example
+date_range <- c(20190101:20190201) # 26 sec to pull 1 month worth of data
+tic()
+loop_data <- pmap(list(date_range, "ymd", 8564), pull_loops)
+toc()
+loops_full <- rbindlist(loop_data)
+
+# Parallel example; takes longer if only pulling one or two days because libraries have to be copied to each core
+library(parallel)
+cl <- makeCluster(detectCores() - 1) # Leaving one core unused
+params <- list(date_range, "ymd", 8564)
+tic()
+clusterSetRNGStream(cl, 1)
+loop_data <- params %>% 
+  lift(clusterMap, cl = cl)(fun = pull_loops)
+toc()
+stopCluster(cl)
+
+loops_full <- rbindlist(loop_data)
+
+# Parallel example pulling 1 year of data, all cores
+library(parallel)
+cl <- makeCluster(detectCores())
+params <- list(c(20190101:20191231), "ymd", 8564) # 24 sec to pull 1 month's worth of data using 3 cores, 16GB memory; 2.37 min to pull 1 year's worth of data (3.2M rows) using 3 cores, 16GB memory - 1.82 min for same operation using 4 cores, same memory.
+tic()
+clusterSetRNGStream(cl, 1)
+loop_data <- params %>% 
+  lift(clusterMap, cl = cl)(fun = pull_loops)
+toc()
+stopCluster(cl)
+
+loops_full <- rbindlist(loop_data)
+
+```
+
+Pulls data (non-404):  http://data.dot.state.mn.us:8080/trafdat/metro/2018/20181021/5474.c30.json
